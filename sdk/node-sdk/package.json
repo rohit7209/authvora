@@ -1,0 +1,19 @@
+{
+  "name": "@authvora/node",
+  "version": "1.0.0",
+  "description": "Authvora Node.js SDK - Authentication for modern applications",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["auth", "authentication", "authvora", "identity", "security"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

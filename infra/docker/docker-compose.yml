@@ -1,0 +1,123 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: authvora-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-authvora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-authvora_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-authvora}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../infra/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authvora"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: authvora-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-authvora_redis}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-authvora_redis}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    build:
+      context: ../../services/auth-service
+      dockerfile: Dockerfile
+    container_name: authvora-auth-service
+    environment:
+      - PORT=8081
+      - DATABASE_URL=postgres://${POSTGRES_USER:-authvora}:${POSTGRES_PASSWORD:-authvora_secret}@postgres:5432/${POSTGRES_DB:-authvora}?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-authvora_redis}@redis:6379/0
+      - JWT_ISSUER=authvora
+      - LOG_LEVEL=debug
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api-gateway:
+    build:
+      context: ../../services/api-gateway
+      dockerfile: Dockerfile
+    container_name: authvora-api-gateway
+    environment:
+      - PORT=8080
+      - AUTH_SERVICE_URL=http://auth-service:8081
+      - RISK_ENGINE_URL=http://risk-engine:8082
+      - POLICY_ENGINE_URL=http://policy-engine:8083
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-authvora_redis}@redis:6379/1
+      - LOG_LEVEL=debug
+    ports:
+      - "8080:8080"
+    depends_on:
+      - auth-service
+
+  risk-engine:
+    build:
+      context: ../../services/risk-engine
+      dockerfile: Dockerfile
+    container_name: authvora-risk-engine
+    environment:
+      - PORT=8082
+      - DATABASE_URL=postgres://${POSTGRES_USER:-authvora}:${POSTGRES_PASSWORD:-authvora_secret}@postgres:5432/${POSTGRES_DB:-authvora}?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-authvora_redis}@redis:6379/2
+      - LOG_LEVEL=debug
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  policy-engine:
+    build:
+      context: ../../services/policy-engine
+      dockerfile: Dockerfile
+    container_name: authvora-policy-engine
+    environment:
+      - PORT=8083
+      - DATABASE_URL=postgres://${POSTGRES_USER:-authvora}:${POSTGRES_PASSWORD:-authvora_secret}@postgres:5432/${POSTGRES_DB:-authvora}?sslmode=disable
+      - LOG_LEVEL=debug
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mcp-server:
+    build:
+      context: ../../services/mcp-server
+      dockerfile: Dockerfile
+    container_name: authvora-mcp-server
+    environment:
+      - PORT=8084
+      - AUTH_SERVICE_URL=http://auth-service:8081
+      - RISK_ENGINE_URL=http://risk-engine:8082
+      - API_GATEWAY_URL=http://api-gateway:8080
+      - DATABASE_URL=postgres://${POSTGRES_USER:-authvora}:${POSTGRES_PASSWORD:-authvora_secret}@postgres:5432/${POSTGRES_DB:-authvora}?sslmode=disable
+      - LOG_LEVEL=debug
+    ports:
+      - "8084:8084"
+    depends_on:
+      - auth-service
+      - risk-engine
+
+volumes:
+  pgdata:
+  redisdata:
