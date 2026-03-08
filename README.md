@@ -5,25 +5,25 @@ AI-native authentication infrastructure platform for modern applications and AI 
 ## Architecture
 
 ```
-┌──────────────────┐     ┌──────────────────┐
-│  Web/Mobile Apps │     │    AI Agents      │
-│  (Node SDK)      │     │  (MCP Server)     │
-└────────┬─────────┘     └────────┬──────────┘
-         │                        │
-         ▼                        ▼
-┌─────────────────────────────────────────────┐
-│              API Gateway (:8080)             │
-│  Rate Limiting · Tenant Resolution · JWT    │
-└───────┬──────────────┬──────────────┬───────┘
+┌───────────────────────────┐     ┌──────────────────┐
+│  Web/Mobile Apps          │     │    AI Agents     │
+│  (Java/Node/Go/Python SDK)│     │  (MCP Server)    │
+└────────┬──────────────────┘     └────────┬─────────┘
+         │                                 │
+         ▼                                 ▼
+┌──────────────────────────────────────────────────────┐
+│              API Gateway (:8080)                     │
+│  Rate Limiting · Tenant Resolution · JWT             │
+└───────┬──────────────┬──────────────┬────────────────┘
         ▼              ▼              ▼
-┌──────────────┐ ┌───────────┐ ┌────────────┐
-│ Auth Service │ │  Policy   │ │   Risk     │
-│   (:8081)    │ │  Engine   │ │  Engine    │
-│              │ │  (:8083)  │ │  (:8082)   │
-│ Go           │ │  Go       │ │  Python    │
-└──────┬───────┘ └─────┬─────┘ └─────┬──────┘
-       │               │             │
-       ▼               ▼             ▼
+┌──────────────┐ ┌─────────────────┐ ┌────────────────┐
+│ Auth Service │ │  Policy Engine  │ │   Risk Engine  │
+│   (:8081)    │ │    (:8083)      │ │    (:8082)     │
+│              │ │                 │ │                │
+│     Go       │ │       Go        │ │     Python     │
+└──────┬───────┘ └─────┬───────────┘ └─────┬──────────┘
+       │               │                   │
+       ▼               ▼                   ▼
 ┌─────────────────────────────────────────────┐
 │     PostgreSQL          Redis               │
 └─────────────────────────────────────────────┘
@@ -31,26 +31,30 @@ AI-native authentication infrastructure platform for modern applications and AI 
 
 ## Services
 
-| Service | Language | Port | Description |
-|---------|----------|------|-------------|
-| api-gateway | Go | 8080 | Request routing, rate limiting, JWT validation |
-| auth-service | Go | 8081 | Registration, login, OAuth, JWT, sessions |
-| risk-engine | Python | 8082 | AI risk scoring, anomaly detection |
-| policy-engine | Go | 8083 | Tenant policies, MFA rules |
-| mcp-server | TypeScript | 8084 | AI agent interface (MCP protocol) |
+
+| Service       | Language   | Port | Description                                    |
+| ------------- | ---------- | ---- | ---------------------------------------------- |
+| api-gateway   | Go         | 8080 | Request routing, rate limiting, JWT validation |
+| auth-service  | Go         | 8081 | Registration, login, OAuth, JWT, sessions      |
+| risk-engine   | Python     | 8082 | AI risk scoring, anomaly detection             |
+| policy-engine | Go         | 8083 | Tenant policies, MFA rules                     |
+| mcp-server    | TypeScript | 8084 | AI agent interface (MCP protocol)              |
+
 
 ## Local Setup
 
 ### Prerequisites
 
-| Tool | Minimum Version | Check |
-|------|----------------|-------|
-| Docker | 20+ | `docker --version` |
-| Docker Compose | 2.0+ | `docker-compose version` |
-| Go | 1.21+ | `go version` |
-| Python | 3.11+ | `python3 --version` |
-| Node.js | 20+ | `node --version` |
-| pip | any | `pip3 --version` |
+
+| Tool           | Minimum Version | Check                    |
+| -------------- | --------------- | ------------------------ |
+| Docker         | 20+             | `docker --version`       |
+| Docker Compose | 2.0+            | `docker-compose version` |
+| Go             | 1.21+           | `go version`             |
+| Python         | 3.11+           | `python3 --version`      |
+| Node.js        | 20+             | `node --version`         |
+| pip            | any             | `pip3 --version`         |
+
 
 ### Step 1: Clone and configure
 
@@ -68,6 +72,7 @@ make up-infra
 ```
 
 This pulls and starts two containers:
+
 - **authvora-postgres** on port `5432` (auto-runs the SQL migration on first boot)
 - **authvora-redis** on port `6379`
 
@@ -99,7 +104,7 @@ You should see the `Default Tenant` with ID `a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1
 make run-auth
 ```
 
-This starts the core authentication service on **http://localhost:8081**. Keep this terminal open.
+This starts the core authentication service on **[http://localhost:8081](http://localhost:8081)**. Keep this terminal open.
 
 ### Step 5: Test the API
 
@@ -165,7 +170,7 @@ In a new terminal:
 make run-gateway
 ```
 
-The gateway runs on **http://localhost:8080** and proxies to the backend services. With the gateway running, you can use the `/api/v1/` prefixed routes:
+The gateway runs on **[http://localhost:8080](http://localhost:8080)** and proxies to the backend services. With the gateway running, you can use the `/api/v1/` prefixed routes:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/auth/register \
@@ -299,3 +304,4 @@ authvora/
 - [Architecture](docs/architecture.md) - System design and service boundaries
 - [Database Schema](docs/database-schema.md) - PostgreSQL schema and Redis patterns
 - [API Design](docs/api-design.md) - REST API contracts and error codes
+
