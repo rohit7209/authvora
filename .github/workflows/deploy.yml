@@ -6,19 +6,162 @@ on:
   workflow_dispatch:
 
 jobs:
+  detect:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.changes.outputs.services }}
+      nginx: ${{ steps.changes.outputs.nginx }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      compose: ${{ steps.changes.outputs.compose }}
+      migrations: ${{ steps.changes.outputs.migrations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          SERVICES=""
+          NGINX="false"
+          FRONTEND="false"
+          COMPOSE="false"
+          MIGRATIONS="false"
+
+          while IFS= read -r file; do
+            case "$file" in
+              services/auth-service/*)    SERVICES="${SERVICES:+$SERVICES,}auth-service" ;;
+              services/api-gateway/*)     SERVICES="${SERVICES:+$SERVICES,}api-gateway" ;;
+              services/risk-engine/*)     SERVICES="${SERVICES:+$SERVICES,}risk-engine" ;;
+              services/policy-engine/*)   SERVICES="${SERVICES:+$SERVICES,}policy-engine" ;;
+              services/mcp-server/*)      SERVICES="${SERVICES:+$SERVICES,}mcp-server" ;;
+              infra/docker/*)             COMPOSE="true" ;;
+              infra/nginx/*)              NGINX="true" ;;
+              infra/migrations/*)         MIGRATIONS="true" ;;
+              infra/frontend-placeholder/*) FRONTEND="true" ;;
+            esac
+          done <<< "$CHANGED"
+
+          # Deduplicate
+          SERVICES=$(echo "$SERVICES" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+
+          echo "services=${SERVICES}" >> "$GITHUB_OUTPUT"
+          echo "nginx=${NGINX}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${FRONTEND}" >> "$GITHUB_OUTPUT"
+          echo "compose=${COMPOSE}" >> "$GITHUB_OUTPUT"
+          echo "migrations=${MIGRATIONS}" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "=== Detection Summary ==="
+          echo "Services to rebuild: ${SERVICES:-none}"
+          echo "Nginx changed: ${NGINX}"
+          echo "Frontend changed: ${FRONTEND}"
+          echo "Compose changed: ${COMPOSE}"
+          echo "Migrations changed: ${MIGRATIONS}"
+
   deploy:
     name: Deploy to Lightsail
+    needs: detect
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
+      - name: Show deploy plan
+        run: |
+          echo "=== Deploy Plan ==="
+          echo "Services: ${{ needs.detect.outputs.services || 'none' }}"
+          echo "Nginx: ${{ needs.detect.outputs.nginx }}"
+          echo "Frontend: ${{ needs.detect.outputs.frontend }}"
+          echo "Compose: ${{ needs.detect.outputs.compose }}"
+          echo "Migrations: ${{ needs.detect.outputs.migrations }}"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          SERVICES: ${{ needs.detect.outputs.services }}
+          NGINX_CHANGED: ${{ needs.detect.outputs.nginx }}
+          FRONTEND_CHANGED: ${{ needs.detect.outputs.frontend }}
+          COMPOSE_CHANGED: ${{ needs.detect.outputs.compose }}
+          MIGRATION_CHANGED: ${{ needs.detect.outputs.migrations }}
         with:
           host: ${{ secrets.LIGHTSAIL_HOST }}
           username: ${{ secrets.LIGHTSAIL_USER }}
           key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          envs: SERVICES,NGINX_CHANGED,FRONTEND_CHANGED,COMPOSE_CHANGED,MIGRATION_CHANGED
           script_stop: true
           timeout: 600s
           script: |
-            bash /opt/authvora/infra/scripts/deploy.sh
+            set -euo pipefail
+            APP_DIR="/opt/authvora"
+            COMPOSE_DIR="${APP_DIR}/infra/docker"
+            COMPOSE_FILE="docker-compose.prod.yml"
+
+            cd "${APP_DIR}"
+            echo "::group::Git Pull"
+            git pull origin main
+            echo "::endgroup::"
+
+            cd "${COMPOSE_DIR}"
+
+            if [ "$COMPOSE_CHANGED" = "true" ]; then
+              echo "::group::Rebuild ALL (compose config changed)"
+              docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
+              echo "::endgroup::"
+            elif [ -n "$SERVICES" ]; then
+              IFS=',' read -ra SVC_ARRAY <<< "$SERVICES"
+              for svc in "${SVC_ARRAY[@]}"; do
+                echo "::group::Building ${svc}"
+                echo ">>> Rebuilding: ${svc}"
+                docker compose -f "$COMPOSE_FILE" up -d --build --no-deps "$svc"
+                echo "<<< Done: ${svc}"
+                echo "::endgroup::"
+              done
+            else
+              echo "No service changes — skipping container builds."
+            fi
+
+            if [ "$MIGRATION_CHANGED" = "true" ]; then
+              echo "::group::Restart Postgres (migrations changed)"
+              docker compose -f "$COMPOSE_FILE" restart postgres
+              echo "::endgroup::"
+            fi
+
+            if [ "$NGINX_CHANGED" = "true" ]; then
+              echo "::group::Update Nginx"
+              sudo cp "${APP_DIR}/infra/nginx/authvora.conf" /etc/nginx/conf.d/authvora.conf
+              sudo nginx -t && sudo systemctl reload nginx
+              echo "::endgroup::"
+            fi
+
+            if [ "$FRONTEND_CHANGED" = "true" ]; then
+              echo "::group::Update Frontend"
+              sudo mkdir -p /var/www/authvora
+              sudo cp "${APP_DIR}/infra/frontend-placeholder/index.html" /var/www/authvora/index.html
+              echo "::endgroup::"
+            fi
+
+            echo "::group::Cleanup"
+            docker image prune -f
+            echo "::endgroup::"
+
+            echo "::group::Health Check"
+            sleep 10
+            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
+            if [ "$HEALTH_STATUS" = "200" ]; then
+              echo "Health check PASSED (HTTP $HEALTH_STATUS)"
+            else
+              echo "Health check FAILED (HTTP $HEALTH_STATUS)"
+              docker compose -f "$COMPOSE_FILE" ps
+              docker compose -f "$COMPOSE_FILE" logs --tail=30
+              exit 1
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Final Status"
+            docker compose -f "$COMPOSE_FILE" ps
+            echo "::endgroup::"
