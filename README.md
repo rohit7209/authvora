@@ -14,8 +14,8 @@ AI-native authentication infrastructure platform for modern applications and AI 
 ┌──────────────────────────────────────────────────────┐
 │              API Gateway (:8080)                     │
 │  Rate Limiting · Tenant Resolution · JWT             │
-└───────┬──────────────┬──────────────┬────────────────┘
-        ▼              ▼              ▼
+└───────┬─────────────────┬──────────────────┬─────────┘
+        ▼                 ▼                  ▼
 ┌──────────────┐ ┌─────────────────┐ ┌────────────────┐
 │ Auth Service │ │  Policy Engine  │ │   Risk Engine  │
 │   (:8081)    │ │    (:8083)      │ │    (:8082)     │
